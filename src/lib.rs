@@ -1,14 +1,10 @@
 use tokio::net::TcpStream;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
 
 use std::io;
 use std::net::SocketAddr;
-// use std::io::{Write, Read};
-// use std::net::{TcpStream, SocketAddr};
 
-use crate::message::RawMessage;
-
-use crate::BUFF_LEN;
+use ostrich_core::{RawMessage, Command, PCK_SIZE};
 
 pub struct Client {
     pub username: Option<String>,
@@ -73,41 +69,39 @@ impl Client {
         // Get server addr
         let addr = self.get_addr()?;
         // Get username and password
-        let username = self.get_name()?;
-        let password = self.get_passw()?;
+        let username = self.get_name()?.to_string();
+        let password = self.get_passw()?.to_string();
 
         // Connect to the server
         let mut socket = TcpStream::connect(&addr).await?; 
 
         // Request USR login
-        socket.write_all(
-            format!("USR~{}~{}", username, password).as_bytes())?;
-        socket.flush()?;
+        socket.write(
+                &RawMessage::to_raw(
+                    &Command::Usr(username, password)
+                )?
+        ).await?;
 
-        // Write the server's response
-        let mut data = [0;BUFF_LEN];
-        let n = socket.read(&mut data).unwrap();
+        // Read the server's response
+        let mut data = [0;PCK_SIZE];
+        let _n = socket.read(&mut data).await?;
         
-        let data = String::from_utf8_lossy(&data[0..n]);
-        
-        let mut data = data.split('~');
-
-        match data.next() {
-            Some(comm) => {
+        match RawMessage::from_raw(&data) {
+            Ok(comm) => {
                 match comm {
-                    "OK" => (),
-                    "ERR" => {
-                        let mesg = match data.next() {
-                            Some(m) => m,
-                            None => "Unknown error",
-                        };
-                        return Err(io::Error::new(io::ErrorKind::PermissionDenied, mesg))
+                    Command::Ok => (),
+                    Command::Err(err) => {
+                        return Err(io::Error::new(
+                                io::ErrorKind::PermissionDenied, 
+                                err.to_string()))
                     },
-                    _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Unknown command")),
+                    _ => return Err(io::Error::new(
+                            io::ErrorKind::InvalidData, 
+                            "Unknown command")),
                 }
             },
-            None => return Err(io::Error::new(io::ErrorKind::ConnectionRefused,
-                                       "Cannot get a response from the server")),
+            Err(err) => return Err(io::Error::new(io::ErrorKind::ConnectionRefused,
+                                       format!("Cannot get a response from the server: {}", err))),
         }
 
         // Save the spcket for later use 
@@ -115,42 +109,24 @@ impl Client {
         Ok(())
     }
 
-    pub fn get(&mut self) -> Result<Option<RawMessage>, io::Error> {
+    pub async fn get(&mut self) -> Result<Command, io::Error> {
         // Get socket
         let socket = self.get_mut_socket()?;
 
         // Send GET Command
-        socket.write("GET".as_bytes())?;
-        socket.flush()?;
+        socket.write(&RawMessage::to_raw(&Command::Get)?).await?;
 
         // Read output
-        let mut buff = [0u8;BUFF_LEN];
-        let n = socket.read(&mut buff)?;
+        let mut buff = [0u8;PCK_SIZE];
+        let _n = socket.read(&mut buff).await?;
         
-        // Check if there is any data to get
-        if buff[..n].starts_with(b"END") {
-            Ok(None)
-
-        } else {
-            // Parse the message
-            let message = RawMessage::from_raw(&buff, n)?; 
-
-            // Check if the receiver field is correct
-            if message.receiver != self.get_name()? {
-                return Err(io::Error::new(
-                           io::ErrorKind::InvalidData, 
-                           "Invalid message format, unable to get correct receiver"));
-            }
-             
-            Ok(Some(message)) 
-        }
+        RawMessage::from_raw(&buff)
     }
     
-    // NOTE: Use RawMessage instead of strings
-    pub fn send(&mut self, target: &str, message: &str) -> Result<(), io::Error> {
+    pub async fn send(&mut self, target: String, message: String) -> Result<(), io::Error> {
         // Get username and socket
         let sender = match &self.username {
-            Some(name) => name, 
+            Some(name) => name.to_string(), 
             None => panic!(),
         };
 
@@ -159,12 +135,12 @@ impl Client {
             None => panic!(),
         };
 
-        // Format the command
-        let command = format!("MSG~{}~{}~{}", sender, target, message);
-        
         // Send the command
-        socket.write(command.as_bytes())?;
-        socket.flush()?;
+        socket.write(
+            &RawMessage::to_raw(
+                &Command::Msg(sender, target, message)
+            )?
+        ).await?;
 
         Ok(())
     }
