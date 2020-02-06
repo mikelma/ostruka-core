@@ -1,6 +1,9 @@
 use tokio::net::TcpStream;
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::io::{AsyncWriteExt, AsyncReadExt, AsyncRead};
+use tokio::stream::Stream;
 
+use core::task::{Poll, Context};
+use core::pin::Pin;
 use std::io;
 use std::net::SocketAddr;
 
@@ -143,5 +146,29 @@ impl Client {
         ).await?;
 
         Ok(())
+    }
+}
+
+impl Stream for Client {
+
+    type Item = Result<Command, io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, 
+                 cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Check if we have received something
+        let mut data = [0u8; PCK_SIZE];
+        let n = match Pin::new(&mut self.get_mut_socket()?).poll_read(cx, &mut data) {
+            Poll::Ready(Ok(n)) => n,
+            Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
+            Poll::Pending => return Poll::Pending,
+        };
+        
+        if n > 0 {
+            let command = RawMessage::from_raw(&data)?;
+            return Poll::Ready(Some(Ok(command)));
+
+        } else {
+            return Poll::Ready(None);
+        }
     }
 }
