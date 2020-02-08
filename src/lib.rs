@@ -125,7 +125,16 @@ impl Client {
         
         RawMessage::from_raw(&buff)
     }
+
+    pub async fn read(&mut self) -> Result<Command, io::Error>{
+        let mut buffer = [0u8; PCK_SIZE];
+        let s = self.get_mut_socket()?;
+        s.read(&mut buffer).await?;
+
+        RawMessage::from_raw(&buffer)
+    }
     
+    // TODO: Add info to panics
     pub async fn send(&mut self, target: String, message: String) -> Result<(), io::Error> {
         // Get username and socket
         let sender = match &self.username {
