@@ -149,7 +149,7 @@ impl Client {
 
         let mut socket = match &mut self.socket {
             Some(s) => Box::new(s),
-            None => panic!("No password available"),
+            None => panic!("No socket available"),
         };
 
         // Send the command
