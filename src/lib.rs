@@ -140,17 +140,16 @@ impl Client {
         RawMessage::from_raw(&buffer)
     }
     
-    // TODO: Add info to panics
     pub async fn send(&mut self, target: String, message: String) -> Result<(), io::Error> {
         // Get username and socket
         let sender = match &self.username {
             Some(name) => name.to_string(), 
-            None => panic!(),
+            None => panic!("No username available"),
         };
 
         let mut socket = match &mut self.socket {
             Some(s) => Box::new(s),
-            None => panic!(),
+            None => panic!("No password available"),
         };
 
         // Send the command
