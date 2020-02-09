@@ -140,16 +140,17 @@ impl Client {
         RawMessage::from_raw(&buffer)
     }
     
+    // TODO: Add info to panics
     pub async fn send(&mut self, target: String, message: String) -> Result<(), io::Error> {
         // Get username and socket
         let sender = match &self.username {
             Some(name) => name.to_string(), 
-            None => panic!("No username available"),
+            None => panic!(),
         };
 
         let mut socket = match &mut self.socket {
             Some(s) => Box::new(s),
-            None => panic!("No socket available"),
+            None => panic!(),
         };
 
         // Send the command
@@ -171,10 +172,17 @@ impl Stream for Client {
                  cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Check if we have received something
         let mut data = [0u8; PCK_SIZE];
+        println!("entering poll_read");
         let n = match Pin::new(&mut self.get_mut_socket()?).poll_read(cx, &mut data) {
-            Poll::Ready(Ok(n)) => n,
+            Poll::Ready(Ok(n)) => {
+                println!("readed");
+                n
+            },
             Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
-            Poll::Pending => return Poll::Pending,
+            Poll::Pending => {
+                println!("pending");
+                return Poll::Pending
+            },
         };
         
         if n > 0 {
