@@ -172,17 +172,10 @@ impl Stream for Client {
                  cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Check if we have received something
         let mut data = [0u8; PCK_SIZE];
-        println!("entering poll_read");
         let n = match Pin::new(&mut self.get_mut_socket()?).poll_read(cx, &mut data) {
-            Poll::Ready(Ok(n)) => {
-                println!("readed");
-                n
-            },
+            Poll::Ready(Ok(n)) => n,
             Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
-            Poll::Pending => {
-                println!("pending");
-                return Poll::Pending
-            },
+            Poll::Pending => return Poll::Pending,
         };
         
         if n > 0 {
