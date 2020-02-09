@@ -16,6 +16,7 @@ pub struct Client {
     pub addr: Option<SocketAddr>,
     
     socket : Option<TcpStream>,
+    is_logged: bool,
 }
 
 impl Client {
@@ -24,7 +25,7 @@ impl Client {
                password: Option<String>, 
                addr: Option<SocketAddr>) -> Client {
 
-        Client { username, password, addr, socket : None }
+        Client { username, password, addr, socket : None, is_logged: false }
     }
 
     pub fn get_name(&self) -> Result<&str, io::Error> {
@@ -63,6 +64,9 @@ impl Client {
         self.socket.is_some()
     }
 
+    pub fn is_logged(&self) -> bool {
+        self.is_logged
+    }
 
     pub fn set_password(&mut self, new_pass: String) {
         self.password = Some(new_pass);
@@ -107,8 +111,10 @@ impl Client {
                                        format!("Cannot get a response from the server: {}", err))),
         }
 
-        // Save the spcket for later use 
+        // Save the socket for later use 
         self.socket = Some(socket);
+
+        self.is_logged = true;
         Ok(())
     }
 
