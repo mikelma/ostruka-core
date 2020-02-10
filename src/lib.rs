@@ -1,6 +1,7 @@
 use tokio::net::TcpStream;
 use tokio::io::{AsyncWriteExt, AsyncReadExt, AsyncRead};
 use tokio::stream::Stream;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use core::task::{Poll, Context};
 use core::pin::Pin;
@@ -9,75 +10,20 @@ use std::net::SocketAddr;
 
 use ostrich_core::{RawMessage, Command, PCK_SIZE};
 
-pub struct Client {
-    pub username: Option<String>,
-    password: Option<String>,
+pub type Tx = UnboundedSender<Command>;
+pub type Rx = UnboundedReceiver<Command>;
 
-    pub addr: Option<SocketAddr>,
-    
-    socket : Option<TcpStream>,
-    is_logged: bool,
+pub struct Client {
+    pub username: String,
+    socket : TcpStream,
+    rx : Rx,
 }
 
 impl Client {
 
-    pub fn new(username: Option<String>, 
-               password: Option<String>, 
-               addr: Option<SocketAddr>) -> Client {
-
-        Client { username, password, addr, socket : None, is_logged: false }
-    }
-
-    pub fn get_name(&self) -> Result<&str, io::Error> {
-        match &self.username {
-            Some(name) => Ok(name),
-            None => Err(io::Error::new(io::ErrorKind::NotFound, 
-                                       "Username not found")),
-        }
-    }
-
-    fn get_passw(&self) -> Result<&str, io::Error> {
-        match &self.password {
-            Some(passw) => Ok(passw),
-            None => Err(io::Error::new(io::ErrorKind::NotFound, 
-                                       "Password not found")),
-        }
-    }
-
-    pub fn get_addr(&self) -> Result<&SocketAddr, io::Error> {
-        match &self.addr {
-            Some(addr) => Ok(addr),
-            None => Err(io::Error::new(io::ErrorKind::NotFound, 
-                                       "Server address not found")),
-        }
-    }
-
-    fn get_mut_socket(&mut self) -> Result<&mut TcpStream, io::Error> {
-        match &mut self.socket {
-            Some(socket) => Ok(socket),
-            None => Err(io::Error::new(io::ErrorKind::NotConnected, 
-                                       "Not connected to any server")),
-        }
-    }
-
-    pub fn is_connected(&self) -> bool {
-        self.socket.is_some()
-    }
-
-    pub fn is_logged(&self) -> bool {
-        self.is_logged
-    }
-
-    pub fn set_password(&mut self, new_pass: String) {
-        self.password = Some(new_pass);
-    } 
-
-    pub async fn log_in(&mut self) -> Result<(), io::Error> {
-        // Get server addr
-        let addr = self.get_addr()?;
-        // Get username and password
-        let username = self.get_name()?.to_string();
-        let password = self.get_passw()?.to_string();
+    pub async fn log_in(name: &str, 
+                        password: &str, 
+                        addr: SocketAddr) -> Result<(Client, Tx), io::Error> {
 
         // Connect to the server
         let mut socket = TcpStream::connect(&addr).await?; 
@@ -85,9 +31,9 @@ impl Client {
         // Request USR login
         socket.write(
                 &RawMessage::to_raw(
-                    &Command::Usr(username, password)
-                )?
-        ).await?;
+                    &Command::Usr(
+                        name.to_string(), 
+                        password.to_string()))?).await?;
 
         // Read the server's response
         let mut data = [0;PCK_SIZE];
@@ -107,72 +53,66 @@ impl Client {
                             "Unknown command")),
                 }
             },
-            Err(err) => return Err(io::Error::new(io::ErrorKind::ConnectionRefused,
-                                       format!("Cannot get a response from the server: {}", err))),
+            Err(err) => return Err(
+                io::Error::new(io::ErrorKind::ConnectionRefused,
+                               format!(
+                                   "Cannot get a response from the server: {}",
+                                   err))),
         }
 
-        // Save the socket for later use 
-        self.socket = Some(socket);
+        let (tx, rx) = mpsc::unbounded_channel();
 
-        self.is_logged = true;
-        Ok(())
+        Ok((Client { 
+            username: name.to_string(), 
+            socket,
+            rx
+        }, tx))
     }
 
-    pub async fn get(&mut self) -> Result<Command, io::Error> {
-        // Get socket
-        let socket = self.get_mut_socket()?;
-
-        // Send GET Command
-        socket.write(&RawMessage::to_raw(&Command::Get)?).await?;
-
-        // Read output
-        let mut buff = [0u8;PCK_SIZE];
-        let _n = socket.read(&mut buff).await?;
-        
-        RawMessage::from_raw(&buff)
-    }
-
-    pub async fn read(&mut self) -> Result<Command, io::Error>{
-        let mut buffer = [0u8; PCK_SIZE];
-        let s = self.get_mut_socket()?;
-        s.read(&mut buffer).await?;
-
-        RawMessage::from_raw(&buffer)
-    }
-    
-    // TODO: Add info to panics
-    pub async fn send(&mut self, target: String, message: String) -> Result<(), io::Error> {
-        // Get username and socket
-        let sender = match &self.username {
-            Some(name) => name.to_string(), 
-            None => panic!(),
-        };
-
-        let mut socket = match &mut self.socket {
-            Some(s) => Box::new(s),
-            None => panic!(),
-        };
-
+    pub async fn send(&mut self, 
+                      target: String, 
+                      message: String) -> Result<(), io::Error> {
         // Send the command
-        socket.write(
+        self.socket.write(
             &RawMessage::to_raw(
-                &Command::Msg(sender, target, message)
+                &Command::Msg(self.username.clone(), target, message)
             )?
         ).await?;
 
         Ok(())
     }
+
+    pub async fn send_cmd(&mut self, 
+                      command: &Command) -> Result<(), io::Error> {
+        // Send the command
+        self.socket.write(
+            &RawMessage::to_raw(command)?).await?;
+        Ok(())
+    }
+}
+/// Enum to distinguish different types of messages that the client needs to handle.
+pub enum Message {
+    /// The client has something to send to the server
+    ToSend(Command),    
+    /// The client has received a message from the server
+    Received(Command),  
 }
 
 impl Stream for Client {
 
-    type Item = Result<Command, io::Error>;
+    type Item = Result<Message, io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, 
                  cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Check if we have received something
+        
+        // Check for messages to send
+        if let Poll::Ready(Some(v)) = Pin::new(&mut self.rx).poll_next(cx) {
+            return Poll::Ready(Some(Ok(Message::ToSend(v))));
+        }
+
+        // Check if we have received something from the server
         let mut data = [0u8; PCK_SIZE];
-        let n = match Pin::new(&mut self.get_mut_socket()?).poll_read(cx, &mut data) {
+        let n = match Pin::new(&mut self.socket).poll_read(cx, &mut data) {
             Poll::Ready(Ok(n)) => n,
             Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
             Poll::Pending => return Poll::Pending,
@@ -180,7 +120,7 @@ impl Stream for Client {
         
         if n > 0 {
             let command = RawMessage::from_raw(&data)?;
-            return Poll::Ready(Some(Ok(command)));
+            return Poll::Ready(Some(Ok(Message::Received(command))));
 
         } else {
             return Poll::Ready(None);
