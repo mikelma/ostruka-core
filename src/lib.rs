@@ -29,7 +29,7 @@ impl Client {
         let mut socket = TcpStream::connect(&addr).await?; 
 
         // Request USR login
-        socket.write(
+        socket.write_all(
                 &RawMessage::to_raw(
                     &Command::Usr(
                         name.to_string(), 
@@ -37,7 +37,7 @@ impl Client {
 
         // Read the server's response
         let mut data = [0;PCK_SIZE];
-        let _n = socket.read(&mut data).await?;
+        let _n = socket.read_exact(&mut data).await?;
         
         match RawMessage::from_raw(&data) {
             Ok(comm) => {
@@ -73,7 +73,7 @@ impl Client {
                       target: String, 
                       message: String) -> Result<(), io::Error> {
         // Send the command
-        self.socket.write(
+        self.socket.write_all(
             &RawMessage::to_raw(
                 &Command::Msg(self.username.clone(), target, message)
             )?
@@ -85,7 +85,7 @@ impl Client {
     pub async fn send_cmd(&mut self, 
                       command: &Command) -> Result<(), io::Error> {
         // Send the command
-        self.socket.write(
+        self.socket.write_all(
             &RawMessage::to_raw(command)?).await?;
         Ok(())
     }
