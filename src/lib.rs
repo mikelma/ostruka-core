@@ -37,7 +37,7 @@ impl Client {
 
         // Read the server's response
         let mut data = [0;PCK_SIZE];
-        let _n = socket.read_exact(&mut data).await?;
+        let _n = socket.read(&mut data).await?;
         
         match RawMessage::from_raw(&data) {
             Ok(comm) => {
